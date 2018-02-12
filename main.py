@@ -6,7 +6,7 @@ import time
 import json
 from contextlib import contextmanager
 
-import paho.mqtt.client as mqtt
+import paho.mqtt.publish as publish
 
 
 HOST = ''
@@ -61,7 +61,10 @@ class UdpServer:
                 print("Got zero data from {}:{} - ignore..".format(addr[0], addr[1]))
                 continue
 
-            print("[{}]: From addr {}:{} receive data: {}".format(time.ctime(), addr[0], addr[1], data))
+            if not data.strip():
+                continue
+
+            print("Incoming {}:{} Data: {}".format(time.ctime(), addr[0], addr[1], data))
             if addr not in self._clients:
                 self._clients[addr] = Client(addr)
                 self._clients[addr].received(data)
@@ -77,7 +80,7 @@ class UdpServer:
                     self._clients.pop(c_key)
 
             try:
-                msg = json.loads(data)
+                msg = json.loads(data.decode("utf-8"))
                 if self._callback and callable(self._callback):
                     self._callback(msg)
 
@@ -87,14 +90,55 @@ class UdpServer:
 
         self._sock.close()
 
-# @contextmanager
+
+class TB:
+    def __init__(self, url, port=1883):
+        self.url = url
+        self.port = port
+
+    def get_device_token(self, device_name):
+        for d in DEVICES:
+            print(d)
+            if d.get("name", "") == device_name:
+                return d.get("token", "")
+        return None
+
+    def __call__(self, msg):
+        device_name = msg.get("device")
+        username = self.get_device_token(msg.get("device"))
+        if not username:
+            print("ERROR: Username not found")
+            print("device_name", device_name)
+            return
+
+        credentials = {
+            "username": username
+        }
+        payload = {
+            "latitude": msg.get("latitude", 0),
+            "longitude": msg.get("longitude", 0)
+
+        }
+
+        try:
+            publish.single("v1/devices/me/telemetry",
+                           json.dumps(payload),
+                           hostname=self.url,
+                           port=self.port,
+                           auth=credentials)
+        except KeyError as err:
+            print("Error from Paho MQTT: {}".format(err))
+
+
 def mqtt_to_thingsboard(msg):
     print("debugging: {}".format(msg))
     device = msg.get("device")
+    value = msg.get("value")
 
 
 def main():
-    server = UdpServer(ADDR, callback=mqtt_to_thingsboard)
+    tb = TB("10.0.1.11", 1883)
+    server = UdpServer(ADDR, callback=tb)
     try:
         server.run()
     except KeyboardInterrupt:
